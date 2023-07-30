@@ -307,7 +307,7 @@ def run_subcircuits(
     if service is not None:
         session = Session(service=service, backend=backend_name)
         sampler = Sampler(session=session, options=options)
-        runner = run_subcircuits_using_aerbackend
+        runner = run_subcircuits_using_sampler
 
     elif isinstance(backend_name, str):
         sampler: AerSimulator = Aer.get_backend(backend_name)
@@ -321,7 +321,7 @@ def run_subcircuits(
 
     else:
         sampler = TestSampler(options=options)
-        runner = run_subcircuits_using_aerbackend
+        runner = run_subcircuits_using_sampler
 
     return runner(subcircuits, sampler)
 
