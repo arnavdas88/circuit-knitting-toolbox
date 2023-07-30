@@ -15,23 +15,28 @@ from __future__ import annotations
 
 import itertools
 import copy
-from typing import Sequence, Any
+from typing import Sequence, Any, List
 from multiprocessing.pool import ThreadPool
 
 import numpy as np
-
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, Aer
 from qiskit.converters import circuit_to_dag, dag_to_circuit
 from qiskit.circuit.library.standard_gates import HGate, SGate, SdgGate, XGate
 from qiskit.primitives import BaseSampler, Sampler as TestSampler
+from qiskit.primitives.base.sampler_result import SamplerResult
+from qiskit.result.distributions.quasi import QuasiDistribution
+
 from qiskit_ibm_runtime import QiskitRuntimeService, Sampler, Session, Options
 
+from qiskit_aer.backends.aer_simulator import AerSimulator
+
+AerBackends = [backend.name() for backend in Aer.backends()] 
 
 def run_subcircuit_instances(
     subcircuits: Sequence[QuantumCircuit],
     subcircuit_instances: dict[int, dict[tuple[tuple[str, ...], tuple[Any, ...]], int]],
     service: QiskitRuntimeService | None = None,
-    backend_names: Sequence[str] | None = None,
+    backend_names: Sequence[str] | Sequence[Backend] | None = None,
     options: Sequence[Options] | None = None,
 ) -> dict[int, dict[int, np.ndarray]]:
     """
@@ -59,25 +64,24 @@ def run_subcircuit_instances(
                 f"but the list of options is length ({len(options)}). It is ambiguous "
                 "how these options should be applied."
             )
-    if service:
-        if backend_names:
-            backend_names_repeated: list[str | None] = [
-                backend_names[i % len(backend_names)] for i, _ in enumerate(subcircuits)
-            ]
-            if options is None:
-                options_repeated: list[Options | None] = [None] * len(
-                    backend_names_repeated
-                )
-            else:
-                options_repeated = [
-                    options[i % len(options)] for i, _ in enumerate(subcircuits)
-                ]
+    if backend_names:
+        backend_names_repeated: list[str | Backend | None] = [
+            backend_names[i % len(backend_names)] for i, _ in enumerate(subcircuits)
+        ]
+        if options is None:
+            options_repeated: list[Options | None] = [None] * len(
+                backend_names_repeated
+            )
         else:
-            backend_names_repeated = ["ibmq_qasm_simulator"] * len(subcircuits)
-            if options:
-                options_repeated = [options[0]] * len(subcircuits)
-            else:
-                options_repeated = [None] * len(subcircuits)
+            options_repeated = [
+                options[i % len(options)] for i, _ in enumerate(subcircuits)
+            ]
+    elif service and not backend_names:
+        backend_names_repeated = ["ibmq_qasm_simulator"] * len(subcircuits)
+        if options:
+            options_repeated = [options[0]] * len(subcircuits)
+        else:
+            options_repeated = [None] * len(subcircuits)
     else:
         backend_names_repeated = [None] * len(subcircuits)
         options_repeated = [None] * len(subcircuits)
@@ -208,6 +212,46 @@ def modify_subcircuit_instance(
 
     return subcircuit_instance_circuit
 
+def counts_to_quasi_dist(counts):
+    total_shots = sum(counts.values())
+    quasi_dists = {}
+    for key,count in counts.items():
+        quasi_dists[key] = count/total_shots
+    assert sum(quasi_dists.values()) == 1
+    return quasi_dists
+
+def run_subcircuits_using_aerbackend(
+    subcircuits: Sequence[QuantumCircuit],
+    sampler: BaseSampler,
+) -> list[np.ndarray]:
+    """
+    Execute the subcircuit(s).
+
+    Args:
+        subcircuit: The subcircuits to be executed
+        sampler: The Sampler to use for executions
+
+    Returns:
+        The probability distributions
+    """
+    for subcircuit in subcircuits:
+        if subcircuit.num_clbits == 0:
+            subcircuit.measure_all()
+
+    results = sampler.run(circuits=subcircuits).result()
+    quasi_dists = [ QuasiDistribution(counts_to_quasi_dist(count)) for count in results.get_counts() ]
+
+    all_probabilities_out = []
+    for i, qd in enumerate(quasi_dists):
+        probabilities = qd.nearest_probability_distribution()
+        probabilities_out = np.zeros(2 ** subcircuits[i].num_qubits, dtype=float)
+
+        for state in probabilities:
+            probabilities_out[state] = probabilities[state]
+        all_probabilities_out.append(probabilities_out)
+
+    return all_probabilities_out
+
 
 def run_subcircuits_using_sampler(
     subcircuits: Sequence[QuantumCircuit],
@@ -227,7 +271,8 @@ def run_subcircuits_using_sampler(
         if subcircuit.num_clbits == 0:
             subcircuit.measure_all()
 
-    quasi_dists = sampler.run(circuits=subcircuits).result().quasi_dists
+    results: SamplerResult = sampler.run(circuits=subcircuits).result()
+    quasi_dists:List[QuasiDistribution] = results.quasi_dists
 
     all_probabilities_out = []
     for i, qd in enumerate(quasi_dists):
@@ -262,10 +307,23 @@ def run_subcircuits(
     if service is not None:
         session = Session(service=service, backend=backend_name)
         sampler = Sampler(session=session, options=options)
+        runner = run_subcircuits_using_aerbackend
+
+    elif isinstance(backend_name, str):
+        sampler: AerSimulator = Aer.get_backend(backend_name)
+        sampler.set_options(**options.simulator.__dict__)
+        runner = run_subcircuits_using_aerbackend
+
+    elif isinstance(backend_name, AerSimulator):
+        # sampler.set_options(**options.simulator.__dict__)
+        sampler: AerSimulator = backend_name
+        runner =  run_subcircuits_using_aerbackend
+
     else:
         sampler = TestSampler(options=options)
+        runner = run_subcircuits_using_aerbackend
 
-    return run_subcircuits_using_sampler(subcircuits, sampler)
+    return runner(subcircuits, sampler)
 
 
 def measure_prob(unmeasured_prob: np.ndarray, meas: tuple[Any, ...]) -> np.ndarray:
@@ -322,7 +380,7 @@ def _run_subcircuit_batch(
     subcircuit_instance: dict[tuple[tuple[str, ...], tuple[Any, ...]], int],
     subcircuit: QuantumCircuit,
     service: QiskitRuntimeService | None = None,
-    backend_name: str | None = None,
+    backend_name: str | Backend | None = None,
     options: Options | None = None,
 ):
     """

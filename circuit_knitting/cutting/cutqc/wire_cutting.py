@@ -17,6 +17,7 @@ from typing import Sequence, Any, Dict, cast, no_type_check
 
 import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister
+from qiskit.providers import BackendV1 as Backend
 from qiskit.circuit import Qubit
 from qiskit.dagcircuit import DAGCircuit, DAGOpNode
 from qiskit.converters import circuit_to_dag, dag_to_circuit
@@ -94,7 +95,7 @@ def cut_circuit_wires(
 def evaluate_subcircuits(
     cuts: dict[str, Any],
     service: QiskitRuntimeService | None = None,
-    backend_names: str | Sequence[str] | None = None,
+    backend_names: str | Sequence[str] | Sequence[Backend] | None = None,
     options: Options | Sequence[Options] | None = None,
 ) -> dict[int, dict[int, np.ndarray]]:
     """
@@ -225,7 +226,7 @@ def _run_subcircuits(
     cuts: dict[str, Any],
     subcircuit_instances: dict[int, dict[tuple[tuple[str, ...], tuple[Any, ...]], int]],
     service: QiskitRuntimeService | None = None,
-    backend_names: Sequence[str] | None = None,
+    backend_names: Sequence[str] | Sequence[Backend] | None = None,
     options: Sequence[Options] | None = None,
 ) -> dict[int, dict[int, np.ndarray]]:
     """
