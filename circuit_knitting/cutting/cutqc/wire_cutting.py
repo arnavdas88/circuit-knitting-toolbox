@@ -15,7 +15,16 @@ from __future__ import annotations
 
 from typing import Sequence, Any, Dict, cast, no_type_check
 
-import numpy as np
+import numpy # Sometimes we want to use a numpy function even if CuPy is available
+
+try:
+    import cupy as np
+    _USE_GPU = True
+except ModuleNotFoundError:
+    import numpy as np
+    print("CuPy not available, only use_gpu=False will work")
+    _USE_GPU = False
+
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.providers import BackendV1 as Backend
 from qiskit.circuit import Qubit

@@ -17,7 +17,16 @@ import copy
 import psutil
 from typing import Sequence
 
-import numpy as np
+import numpy # Sometimes we want to use a numpy function even if CuPy is available
+
+try:
+    import cupy as np
+    _USE_GPU = True
+except ModuleNotFoundError:
+    import numpy as np
+    print("CuPy not available, only use_gpu=False will work")
+    _USE_GPU = False
+
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
 from qiskit.quantum_info import Statevector
