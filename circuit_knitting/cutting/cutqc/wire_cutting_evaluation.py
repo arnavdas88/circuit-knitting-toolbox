@@ -18,7 +18,16 @@ import copy
 from typing import Sequence, Any, List
 from multiprocessing.pool import ThreadPool
 
-import numpy as np
+import numpy # Sometimes we want to use a numpy function even if CuPy is available
+
+try:
+    import cupy as np
+    _USE_GPU = True
+except ModuleNotFoundError:
+    import numpy as np
+    print("CuPy not available, only use_gpu=False will work")
+    _USE_GPU = False
+
 from qiskit import QuantumCircuit, Aer
 from qiskit.converters import circuit_to_dag, dag_to_circuit
 from qiskit.circuit.library.standard_gates import HGate, SGate, SdgGate, XGate
