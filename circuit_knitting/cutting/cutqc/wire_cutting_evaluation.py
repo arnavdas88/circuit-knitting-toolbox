@@ -217,8 +217,11 @@ def counts_to_quasi_dist(counts):
     quasi_dists = {}
     for key,count in counts.items():
         quasi_dists[key] = count/total_shots
-    assert sum(quasi_dists.values()) == 1
+    assert np.isclose(sum(quasi_dists.values()), 1)
     return quasi_dists
+
+from qiskit.utils.mitigation import (complete_meas_cal, CompleteMeasFitter)
+
 
 def run_subcircuits_using_aerbackend(
     subcircuits: Sequence[QuantumCircuit],
@@ -238,8 +241,22 @@ def run_subcircuits_using_aerbackend(
         if subcircuit.num_clbits == 0:
             subcircuit.measure_all()
 
+    # Measurement Error Mitigation
+    meas_fitters = []
+    for qc in subcircuits:
+        meas_cals, state_labels = complete_meas_cal(qubit_list=range(len(qc.clbits)), qr=qc.qubits)
+        cal_results = sampler.run(circuits=meas_cals).result()
+        meas_fitter = CompleteMeasFitter(cal_results, state_labels)
+        
+        meas_fitters += [meas_fitter]
+
     results = sampler.run(circuits=subcircuits).result()
-    quasi_dists = [ QuasiDistribution(counts_to_quasi_dist(count)) for count in results.get_counts() ]
+    counts = []
+    for meas_fitter, raw_counts in zip(meas_fitters, results.get_counts()):
+        meas_filter = meas_fitter.filter
+        mitigated_counts = meas_filter.apply(raw_counts)
+        counts += [mitigated_counts]
+    quasi_dists = [ QuasiDistribution(counts_to_quasi_dist(count)) for count in counts ]
 
     all_probabilities_out = []
     for i, qd in enumerate(quasi_dists):
